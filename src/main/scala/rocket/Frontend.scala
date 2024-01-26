@@ -35,6 +35,7 @@ class FrontendResp(implicit p: Parameters) extends CoreBundle()(p) {
   val btb = new BTBResp
   val pc = UInt(vaddrBitsExtended.W)  // ID stage PC
   val data = UInt((fetchWidth * coreInstBits).W)
+  val tag = UInt(32.W) //For pipeline viewer
   val mask = Bits(fetchWidth.W)
   val xcpt = new FrontendExceptions
   val replay = Bool()
@@ -99,9 +100,16 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
   withClock (gated_clock) { // entering gated-clock domain
 
   val tlb = Module(new TLB(true, log2Ceil(fetchBytes), TLBConfig(nTLBSets, nTLBWays, outer.icacheParams.nTLBBasePageSectors, outer.icacheParams.nTLBSuperpages)))
-
+  //For pipeline viewer
+  val inst_ctr = RegInit(0.U(32.W))
+  inst_ctr := inst_ctr + 1.U
+  //
   val s1_valid = Reg(Bool())
+  
   val s2_valid = RegInit(false.B)
+  val s1_tag = Reg(UInt(32.W))
+  val s2_tag = Reg(UInt(32.W))
+
   val s0_fq_has_space =
     !fq.io.mask(fq.io.mask.getWidth-3) ||
     (!fq.io.mask(fq.io.mask.getWidth-2) && (!s1_valid || !s2_valid)) ||
@@ -131,15 +139,23 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
   val npc = Mux(s2_replay, s2_pc, predicted_npc)
 
   s1_pc := io.cpu.npc
+  s1_tag := inst_ctr// Pipeline Viewer
+  // printf("IF1: time: %d count=[%d] pc=[%x] inst=[%x] DASM(%x)\n", 0.U, s1_tag, s1_pc, 0.U, 0.U) 
+  when (s2_valid) {
+    printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"ID\"}\n", s2_tag, s2_pc, icache.io.resp.bits.data, inst_ctr)
+  }
+  // printf("IF2: time: %d count=[%d] pc=[%x] inst=[%x] DASM(%x)\n", 0.U, s2_tag, s2_pc, icache.io.resp.bits.data, icache.io.resp.bits.data)
+  //printf("\"Dec\":\"DASM(%x)\",", id_inst(0))
+  // printf("{\"IF2\":\"DASM(%x)\",", icache.io.resp.bits.data)
   // consider RVC fetches across blocks to be non-speculative if the first
   // part was non-speculative
   val s0_speculative =
     if (usingCompressed) s1_speculative || s2_valid && !s2_speculative || predicted_taken
     else true.B
   s1_speculative := Mux(io.cpu.req.valid, io.cpu.req.bits.speculative, Mux(s2_replay, s2_speculative, s0_speculative))
-
   val s2_redirect = WireDefault(io.cpu.req.valid)
   s2_valid := false.B
+  s2_tag := s1_tag
   when (!s2_replay) {
     s2_valid := !s2_redirect
     s2_pc := s1_pc
@@ -179,6 +195,7 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
 
   fq.io.enq.valid := RegNext(s1_valid) && s2_valid && (icache.io.resp.valid || (s2_kill_speculative_tlb_refill && s2_tlb_resp.miss) || (!s2_tlb_resp.miss && icache.io.s2_kill))
   fq.io.enq.bits.pc := s2_pc
+  fq.io.enq.bits.tag := s2_tag
   io.cpu.npc := alignPC(Mux(io.cpu.req.valid, io.cpu.req.bits.pc, npc))
 
   fq.io.enq.bits.data := icache.io.resp.bits.data
@@ -189,7 +206,7 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
   fq.io.enq.bits.xcpt := s2_tlb_resp
   assert(!(s2_speculative && io.ptw.customCSRs.asInstanceOf[RocketCustomCSRs].disableSpeculativeICacheRefill && !icache.io.s2_kill))
   when (icache.io.resp.valid && icache.io.resp.bits.ae) { fq.io.enq.bits.xcpt.ae.inst := true.B }
-
+    
   if (usingBTB) {
     val btb = Module(new BTB)
     btb.io.flush := false.B
@@ -378,6 +395,8 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
 
   def ccover(cond: Bool, label: String, desc: String)(implicit sourceInfo: SourceInfo) =
     property.cover(cond, s"FRONTEND_$label", "Rocket;;" + desc)
+ 
+  
 }
 
 /** Mix-ins for constructing tiles that have an ICache-based pipeline frontend */

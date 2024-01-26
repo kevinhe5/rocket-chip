@@ -25,6 +25,7 @@ class IBuf(implicit p: Parameters) extends CoreModule {
     val pc = Output(UInt(vaddrBitsExtended.W))
     val btb_resp = Output(new BTBResp())
     val inst = Vec(retireWidth, Decoupled(new Instruction))
+    val tag = Output(UInt(32.W)) //Pipeline Viewer only supports non compressed inst
   })
 
   // This module is meant to be more general, but it's not there yet
@@ -80,6 +81,7 @@ class IBuf(implicit p: Parameters) extends CoreModule {
 
   io.btb_resp := io.imem.bits.btb
   io.pc := Mux(nBufValid > 0.U, buf.pc, io.imem.bits.pc)
+  io.tag := io.imem.bits.tag
   expand(0, 0.U, inst)
 
   def expand(i: Int, j: UInt, curInst: UInt): Unit = if (i < retireWidth) {

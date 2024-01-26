@@ -236,6 +236,9 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val ex_scie_unpipelined = Reg(Bool())
   val ex_scie_pipelined = Reg(Bool())
   val ex_reg_wphit            = Reg(Vec(nBreakpoints, Bool()))
+  val ex_reg_tag  = Reg(UInt(32.W)) //For pipeline viewer
+  val inst_ctr = RegInit(0.U(32.W))
+  inst_ctr := inst_ctr + 1.U
 
   val mem_reg_xcpt_interrupt  = Reg(Bool())
   val mem_reg_valid           = Reg(Bool())
@@ -261,6 +264,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val mem_br_taken = Reg(Bool())
   val take_pc_mem = Wire(Bool())
   val mem_reg_wphit          = Reg(Vec(nBreakpoints, Bool()))
+  val mem_reg_tag  = Reg(UInt(32.W)) //For pipeline viewer
 
   val wb_reg_valid           = Reg(Bool())
   val wb_reg_xcpt            = Reg(Bool())
@@ -279,6 +283,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val wb_reg_rs2 = Reg(Bits())
   val take_pc_wb = Wire(Bool())
   val wb_reg_wphit           = Reg(Vec(nBreakpoints, Bool()))
+  val wb_reg_tag  = Reg(UInt(32.W)) //For pipeline viewer
 
   val take_pc_mem_wb = take_pc_wb || take_pc_mem
   val take_pc = take_pc_mem_wb
@@ -561,6 +566,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     ex_reg_pc := ibuf.io.pc
     ex_reg_btb_resp := ibuf.io.btb_resp
     ex_reg_wphit := bpu.io.bpwatch.map { bpw => bpw.ivalid(0) }
+    ex_reg_tag := ibuf.io.tag
   }
 
   // replay inst in ex stage?
@@ -627,6 +633,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     mem_reg_mem_size := ex_reg_mem_size
     mem_reg_hls_or_dv := io.dmem.req.bits.dv
     mem_reg_pc := ex_reg_pc
+    mem_reg_tag := ex_reg_tag
     // IDecode ensured they are 1H
     mem_reg_wdata := Mux1H(Seq(
       ex_scie_unpipelined -> ex_scie_unpipelined_wdata,
@@ -695,6 +702,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     wb_reg_hfence_v := mem_ctrl.mem_cmd === M_HFENCEV
     wb_reg_hfence_g := mem_ctrl.mem_cmd === M_HFENCEG
     wb_reg_pc := mem_reg_pc
+    wb_reg_tag := mem_reg_tag
     wb_reg_wphit := mem_reg_wphit | bpu.io.bpwatch.map { bpw => (bpw.rvalid(0) && mem_reg_load) || (bpw.wvalid(0) && mem_reg_store) }
 
   }
@@ -1081,19 +1089,40 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     }
   }
   else {
-    when (csr.io.trace(0).valid) {
-      printf("C%d: %d [%d] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] inst=[%x] DASM(%x)\n",
-         io.hartid, coreMonitorBundle.timer, coreMonitorBundle.valid,
-         coreMonitorBundle.pc,
-         Mux(wb_ctrl.wxd || wb_ctrl.wfd, coreMonitorBundle.wrdst, 0.U),
-         Mux(coreMonitorBundle.wrenx, coreMonitorBundle.wrdata, 0.U),
-         coreMonitorBundle.wrenx,
-         Mux(wb_ctrl.rxs1 || wb_ctrl.rfs1, coreMonitorBundle.rd0src, 0.U),
-         Mux(wb_ctrl.rxs1 || wb_ctrl.rfs1, coreMonitorBundle.rd0val, 0.U),
-         Mux(wb_ctrl.rxs2 || wb_ctrl.rfs2, coreMonitorBundle.rd1src, 0.U),
-         Mux(wb_ctrl.rxs2 || wb_ctrl.rfs2, coreMonitorBundle.rd1val, 0.U),
-         coreMonitorBundle.inst, coreMonitorBundle.inst)
+    // printf("\"Dec\":\"DASM(%x)\",", id_inst(0))
+    // printf("\"Exe\":\"DASM(%x)\",", ex_reg_inst)
+    // printf("\"Mem\":\"DASM(%x)\",", mem_reg_inst)
+    // printf("\"WrB\":\"DASM(%x)\"}\n", wb_reg_inst)
+    when (ibuf.io.inst(0).valid) {
+      printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"DEC\"}\n", ibuf.io.tag, ibuf.io.pc, id_inst(0), inst_ctr)
     }
+    when (ex_reg_valid) {
+      printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"EXE\"}\n", ex_reg_tag, ex_reg_pc, ex_reg_inst, inst_ctr)
+    }
+    when (mem_reg_valid) {
+      printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"MEM\"}\n", mem_reg_tag, mem_reg_pc, mem_reg_inst, inst_ctr)
+    }
+    when (wb_reg_valid) {
+      printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"WB\"}\n", wb_reg_tag, wb_reg_pc, wb_reg_inst, inst_ctr)
+    }
+    
+    // printf("Dec: time: %d count=[%d] pc=[%x] inst=[%x] DASM(%x)", coreMonitorBundle.timer, ibuf.io.tag, ibuf.io.pc, id_inst(0), id_inst(0))
+    // printf("Exe: time: %d count=[%d] pc=[%x] inst=[%x] DASM(%x)\n", coreMonitorBundle.timer, ex_reg_tag, ex_reg_pc, ex_reg_inst, ex_reg_inst)
+    // printf("Mem: time: %d count=[%d] pc=[%x] inst=[%x] DASM(%x)\n", coreMonitorBundle.timer, mem_reg_tag, mem_reg_pc, mem_reg_inst, mem_reg_inst)
+    // printf("WrB: time: %d count=[%d] pc=[%x] inst=[%x] DASM(%x)\n", coreMonitorBundle.timer, wb_reg_tag, wb_reg_pc, wb_reg_inst, wb_reg_inst)
+    // when (csr.io.trace(0).valid) {
+    //   printf("C%d: %d [%d] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] inst=[%x] DASM(%x)\n",
+    //      io.hartid, coreMonitorBundle.timer, coreMonitorBundle.valid,
+    //      coreMonitorBundle.pc,
+    //      Mux(wb_ctrl.wxd || wb_ctrl.wfd, coreMonitorBundle.wrdst, 0.U),
+    //      Mux(coreMonitorBundle.wrenx, coreMonitorBundle.wrdata, 0.U),
+    //      coreMonitorBundle.wrenx,
+    //      Mux(wb_ctrl.rxs1 || wb_ctrl.rfs1, coreMonitorBundle.rd0src, 0.U),
+    //      Mux(wb_ctrl.rxs1 || wb_ctrl.rfs1, coreMonitorBundle.rd0val, 0.U),
+    //      Mux(wb_ctrl.rxs2 || wb_ctrl.rfs2, coreMonitorBundle.rd1src, 0.U),
+    //      Mux(wb_ctrl.rxs2 || wb_ctrl.rfs2, coreMonitorBundle.rd1val, 0.U),
+    //      coreMonitorBundle.inst, coreMonitorBundle.inst)
+    // }
   }
 
   // CoreMonitorBundle for late latency writes
