@@ -25,7 +25,7 @@ class IBuf(implicit p: Parameters) extends CoreModule {
     val pc = Output(UInt(vaddrBitsExtended.W))
     val btb_resp = Output(new BTBResp())
     val inst = Vec(retireWidth, Decoupled(new Instruction))
-    val tag = Output(UInt(32.W)) //Pipeline Viewer only supports non compressed inst
+    val tag = Output(new EventAnnotation) //Pipeline Viewer only supports non compressed inst
   })
 
   // This module is meant to be more general, but it's not there yet
@@ -43,7 +43,9 @@ class IBuf(implicit p: Parameters) extends CoreModule {
   val nICReady = nReady - nBufValid
   val nValid = Mux(io.imem.valid, nIC, 0.U) + nBufValid
   io.imem.ready := io.inst(0).ready && nReady >= nBufValid && (nICReady >= nIC || n.U >= nIC - nICReady)
-
+  //inst_ctr for pipeline annotations
+  val inst_ctr = RegInit(0.U(32.W))
+  inst_ctr := inst_ctr + 1.U
   if (n > 0) {
     when (io.inst(0).ready) {
       nBufValid := Mux(nReady >== nBufValid, 0.U, nBufValid - nReady)
@@ -58,6 +60,7 @@ class IBuf(implicit p: Parameters) extends CoreModule {
         buf := io.imem.bits
         buf.data := shiftInsnRight(io.imem.bits.data, shamt)(n*coreInstBits-1,0)
         buf.pc := io.imem.bits.pc & ~pcWordMask | (io.imem.bits.pc + (nICReady << log2Ceil(coreInstBytes))) & pcWordMask
+        buf.tag := GenEvent("IBuf", inst_ctr, io.imem.bits.pc & ~pcWordMask | (io.imem.bits.pc + (nICReady << log2Ceil(coreInstBytes))) & pcWordMask, Some(io.imem.bits.tag))
         ibufBTBResp := io.imem.bits.btb
       }
     }
@@ -81,7 +84,7 @@ class IBuf(implicit p: Parameters) extends CoreModule {
 
   io.btb_resp := io.imem.bits.btb
   io.pc := Mux(nBufValid > 0.U, buf.pc, io.imem.bits.pc)
-  io.tag := io.imem.bits.tag
+  io.tag := Mux(nBufValid > 0.U, buf.tag, io.imem.bits.tag)
   expand(0, 0.U, inst)
 
   def expand(i: Int, j: UInt, curInst: UInt): Unit = if (i < retireWidth) {

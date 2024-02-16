@@ -197,6 +197,15 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     Seq(new IDecode(aluFn))
   } flatMap(_.table)
 
+  //For pipeline viewer
+  val dec_reg_tag  = Reg(new EventAnnotation)
+  val ex_reg_tag  = Reg(new EventAnnotation) 
+  val mem_reg_tag  = Reg(new EventAnnotation) //For pipeline viewer
+  val wb_reg_tag  = Reg(new EventAnnotation) //For pipeline viewer
+  
+  val cycle = RegInit(0.U(32.W))
+  cycle := cycle + 1.U
+
   val ex_ctrl = Reg(new IntCtrlSigs(aluFn))
   val mem_ctrl = Reg(new IntCtrlSigs(aluFn))
   val wb_ctrl = Reg(new IntCtrlSigs(aluFn))
@@ -216,9 +225,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val ex_reg_inst = Reg(Bits())
   val ex_reg_raw_inst = Reg(UInt())
   val ex_reg_wphit            = Reg(Vec(nBreakpoints, Bool()))
-  val ex_reg_tag  = Reg(UInt(32.W)) //For pipeline viewer
-  val inst_ctr = RegInit(0.U(32.W))
-  inst_ctr := inst_ctr + 1.U
+
 
   val mem_reg_xcpt_interrupt  = Reg(Bool())
   val mem_reg_valid           = Reg(Bool())
@@ -242,7 +249,6 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val mem_br_taken = Reg(Bool())
   val take_pc_mem = Wire(Bool())
   val mem_reg_wphit          = Reg(Vec(nBreakpoints, Bool()))
-  val mem_reg_tag  = Reg(UInt(32.W)) //For pipeline viewer
 
   val wb_reg_valid           = Reg(Bool())
   val wb_reg_xcpt            = Reg(Bool())
@@ -261,7 +267,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val wb_reg_rs2 = Reg(Bits())
   val take_pc_wb = Wire(Bool())
   val wb_reg_wphit           = Reg(Vec(nBreakpoints, Bool()))
-  val wb_reg_tag  = Reg(UInt(32.W)) //For pipeline viewer
+
 
   val take_pc_mem_wb = take_pc_wb || take_pc_mem
   val take_pc = take_pc_mem_wb
@@ -486,7 +492,8 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     ex_reg_pc := ibuf.io.pc
     ex_reg_btb_resp := ibuf.io.btb_resp
     ex_reg_wphit := bpu.io.bpwatch.map { bpw => bpw.ivalid(0) }
-    ex_reg_tag := ibuf.io.tag
+    ex_reg_tag := GenEvent("EX", cycle, ibuf.io.pc, Some(ibuf.io.tag))
+    // ex_reg_tag := ibuf.io.tag
   }
 
   // replay inst in ex stage?
@@ -551,7 +558,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     mem_reg_mem_size := ex_reg_mem_size
     mem_reg_hls_or_dv := io.dmem.req.bits.dv
     mem_reg_pc := ex_reg_pc
-    mem_reg_tag := ex_reg_tag
+    mem_reg_tag := GenEvent("MEM", cycle, ex_reg_pc, Some(ex_reg_tag))
     // IDecode ensured they are 1H
     mem_reg_wdata := alu.io.out
     mem_br_taken := alu.io.cmp_out
@@ -612,7 +619,8 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     wb_reg_hfence_v := mem_ctrl.mem_cmd === M_HFENCEV
     wb_reg_hfence_g := mem_ctrl.mem_cmd === M_HFENCEG
     wb_reg_pc := mem_reg_pc
-    wb_reg_tag := mem_reg_tag
+    wb_reg_tag := GenEvent("WB", cycle, mem_reg_pc, Some(mem_reg_tag))
+    //wb_reg_tag := mem_reg_tag
     wb_reg_wphit := mem_reg_wphit | bpu.io.bpwatch.map { bpw => (bpw.rvalid(0) && mem_reg_load) || (bpw.wvalid(0) && mem_reg_store) }
 
   }
@@ -687,8 +695,11 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     ll_wen := true.B
   }
 
-  val wb_valid = wb_reg_valid && !replay_wb && !wb_xcpt
+  val wb_valid = wb_reg_valid && !replay_wb && !wb_xcpt //condition for committed instruction
   val wb_wen = wb_valid && wb_ctrl.wxd
+  when (wb_valid) {
+    GenEvent("RET", cycle, wb_reg_inst, Some(wb_reg_tag)) //Added for pipeline viewer
+  }
   val rf_wen = wb_wen || ll_wen
   val rf_waddr = Mux(ll_wen, ll_waddr, wb_waddr)
   val rf_wdata = Mux(dmem_resp_valid && dmem_resp_xpu, io.dmem.resp.bits.data(xLen-1, 0),
@@ -1003,18 +1014,22 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     // printf("\"Exe\":\"DASM(%x)\",", ex_reg_inst)
     // printf("\"Mem\":\"DASM(%x)\",", mem_reg_inst)
     // printf("\"WrB\":\"DASM(%x)\"}\n", wb_reg_inst)
-    when (ibuf.io.inst(0).valid) {
-      printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"DEC\"}\n", ibuf.io.tag, ibuf.io.pc, id_inst(0), inst_ctr)
-    }
-    when (ex_reg_valid) {
-      printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"EXE\"}\n", ex_reg_tag, ex_reg_pc, ex_reg_inst, inst_ctr)
-    }
-    when (mem_reg_valid) {
-      printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"MEM\"}\n", mem_reg_tag, mem_reg_pc, mem_reg_inst, inst_ctr)
-    }
-    when (wb_reg_valid) {
-      printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"WB\"}\n", wb_reg_tag, wb_reg_pc, wb_reg_inst, inst_ctr)
-    }
+    // when (ibuf.io.inst(0).fire) { //inst(0).fire
+    //   dec_reg_tag := GenEvent("DE", cycle, ibuf.io.pc, Some(ibuf.io.tag))
+    //   //printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"DEC\"}\n", ibuf.io.tag, ibuf.io.pc, id_inst(0), inst_ctr)
+    // }
+    // when (ex_reg_valid) {
+    //   ex_reg_tag := GenEvent("EX", cycle, ex_reg_pc, Some(dec_reg_tag))
+    //   //printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"EXE\"}\n", ex_reg_tag, ex_reg_pc, ex_reg_inst, inst_ctr)
+    // }
+    // when (mem_reg_valid) {
+    //   mem_reg_tag := GenEvent("MEM", cycle, mem_reg_pc, Some(ex_reg_tag))
+      //printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"MEM\"}\n", mem_reg_tag, mem_reg_pc, mem_reg_inst, inst_ctr)
+    // }
+    // when (wb_valid) { //Changed from wb_reg_valid
+    //   wb_reg_tag := GenEvent("WB", cycle, wb_reg_pc, Some(mem_reg_tag))
+    //   //printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"WB\"}\n", wb_reg_tag, wb_reg_pc, wb_reg_inst, inst_ctr)
+    // }
     
     // printf("Dec: time: %d count=[%d] pc=[%x] inst=[%x] DASM(%x)", coreMonitorBundle.timer, ibuf.io.tag, ibuf.io.pc, id_inst(0), id_inst(0))
     // printf("Exe: time: %d count=[%d] pc=[%x] inst=[%x] DASM(%x)\n", coreMonitorBundle.timer, ex_reg_tag, ex_reg_pc, ex_reg_inst, ex_reg_inst)

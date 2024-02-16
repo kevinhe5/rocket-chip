@@ -3,6 +3,7 @@
 package freechips.rocketchip.util
 
 import chisel3._
+import chisel3.util._
 import chisel3.experimental.{annotate, ChiselAnnotation}
 import chisel3.RawModule
 import firrtl.annotations._
@@ -12,6 +13,49 @@ import freechips.rocketchip.regmapper._
 
 import org.json4s.JsonDSL._
 import org.json4s.jackson.JsonMethods.{pretty, render}
+import java.awt.Event
+
+// object GenUniqueUInt {
+//   var id: Int = 0
+//   def apply(): UInt = {
+//     val out = Wire(UInt(64.W))
+//     out := id.U
+//     id += 1
+//     out
+//   }
+// }
+// class GenEventModule extends Module {val io = IO(new Bundle {
+//   val cycle = Input(UInt())
+  
+// })}
+// type AnnotationData := UInt | Instruction | String etc etc
+
+
+object GenEvent {
+  var instance_ctr: Int = 0 
+  def apply(eventName: String, cycle: UInt, data: UInt, parent: Option[EventAnnotation]): EventAnnotation = {
+    var new_id = Wire(UInt(64.W))
+    new_id := Cat(instance_ctr.asUInt(32.W), cycle)
+    if (parent.isDefined) {
+       if (eventName == "RET") { //Stop gap solution until we get generic types
+        printf(cf"{\"id\": \"0x$new_id%x\", \"parents\": \"0x${parent.get.parent}%x\", \"cycle\": \"$cycle\", \"event_name\": \"$eventName\", \"data\": \"DASM($data%x)\"}\n")
+      } else {
+        printf(cf"{\"id\": \"0x$new_id%x\", \"parents\": \"0x${parent.get.parent}%x\", \"cycle\": \"$cycle\", \"event_name\": \"$eventName\", \"data\": \"0x$data%x\"}\n") 
+      }
+    } else {
+      printf(cf"{\"id\": \"0x$new_id%x\", \"parents\": \"None\", \"cycle\": \"$cycle\", \"event_name\": \"$eventName\", \"data\": \"0x$data%x\"}\n")
+    }
+    
+    val annotation = Wire(new EventAnnotation)
+    annotation.parent := new_id
+    instance_ctr += 1
+    return annotation
+  }
+}
+
+class EventAnnotation extends Bundle {
+  val parent = UInt(64.W)
+}
 
 /** Record a sram. */
 case class SRAMAnnotation(target: Named,

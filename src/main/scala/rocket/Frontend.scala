@@ -35,7 +35,7 @@ class FrontendResp(implicit p: Parameters) extends CoreBundle()(p) {
   val btb = new BTBResp
   val pc = UInt(vaddrBitsExtended.W)  // ID stage PC
   val data = UInt((fetchWidth * coreInstBits).W)
-  val tag = UInt(32.W) //For pipeline viewer
+  val tag = new EventAnnotation //For pipeline viewer
   val mask = Bits(fetchWidth.W)
   val xcpt = new FrontendExceptions
   val replay = Bool()
@@ -107,8 +107,6 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
   val s1_valid = Reg(Bool())
   
   val s2_valid = RegInit(false.B)
-  val s1_tag = Reg(UInt(32.W))
-  val s2_tag = Reg(UInt(32.W))
 
   val s0_fq_has_space =
     !fq.io.mask(fq.io.mask.getWidth-3) ||
@@ -139,11 +137,16 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
   val npc = Mux(s2_replay, s2_pc, predicted_npc)
 
   s1_pc := io.cpu.npc
-  s1_tag := inst_ctr// Pipeline Viewer
-  // printf("IF1: time: %d count=[%d] pc=[%x] inst=[%x] DASM(%x)\n", 0.U, s1_tag, s1_pc, 0.U, 0.U) 
-  when (s2_valid) {
-    printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"ID\"}\n", s2_tag, s2_pc, icache.io.resp.bits.data, inst_ctr)
-  }
+  
+ 
+  // Pipeline Viewer
+  val s1_tag = Reg(new EventAnnotation)
+  s1_tag := GenEvent("IF1", inst_ctr, io.cpu.npc, None)
+  val s2_tag = Reg(new EventAnnotation)
+
+  
+    
+    //printf("{\"inst_id\":%d, \"pc\": %d, \"expanded_inst\": \"DASM(%x)\", \"cycle\": %d, \"stage\": \"ID\"}\n", s2_tag, s2_pc, icache.io.resp.bits.data, inst_ctr)
   // printf("IF2: time: %d count=[%d] pc=[%x] inst=[%x] DASM(%x)\n", 0.U, s2_tag, s2_pc, icache.io.resp.bits.data, icache.io.resp.bits.data)
   //printf("\"Dec\":\"DASM(%x)\",", id_inst(0))
   // printf("{\"IF2\":\"DASM(%x)\",", icache.io.resp.bits.data)
@@ -155,10 +158,11 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
   s1_speculative := Mux(io.cpu.req.valid, io.cpu.req.bits.speculative, Mux(s2_replay, s2_speculative, s0_speculative))
   val s2_redirect = WireDefault(io.cpu.req.valid)
   s2_valid := false.B
-  s2_tag := s1_tag
+  //s2_tag := s1_tag
   when (!s2_replay) {
     s2_valid := !s2_redirect
     s2_pc := s1_pc
+    s2_tag := GenEvent("IF2", inst_ctr, s1_pc, Some(s1_tag))
     s2_speculative := s1_speculative
     s2_tlb_resp := tlb.io.resp
   }
