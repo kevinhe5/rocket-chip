@@ -37,11 +37,11 @@ object GenEvent {
     var new_id = Wire(UInt(64.W))
     new_id := Cat(instance_ctr.asUInt(32.W), cycle)
     if (parent.isDefined) {
-       if (eventName == "RET") { //Stop gap solution until we get generic types
-        printf(cf"{\"id\": \"0x$new_id%x\", \"parents\": \"0x${parent.get.parent}%x\", \"cycle\": \"$cycle\", \"event_name\": \"$eventName\", \"data\": \"DASM($data%x)\"}\n")
-      } else {
-        printf(cf"{\"id\": \"0x$new_id%x\", \"parents\": \"0x${parent.get.parent}%x\", \"cycle\": \"$cycle\", \"event_name\": \"$eventName\", \"data\": \"0x$data%x\"}\n") 
-      }
+      //  if (eventName == "RET") { //Stop gap solution until we get generic types
+      //   printf(cf"{\"id\": \"0x$new_id%x\", \"parents\": \"0x${parent.get.parent}%x\", \"cycle\": \"$cycle\", \"event_name\": \"$eventName\", \"data\": \"DASM($data%x)\"}\n")
+      // } else {
+      printf(cf"{\"id\": \"0x$new_id%x\", \"parents\": \"0x${parent.get.parent}%x\", \"cycle\": \"$cycle\", \"event_name\": \"$eventName\", \"data\": \"0x$data%x\"}\n") 
+      // }
     } else {
       printf(cf"{\"id\": \"0x$new_id%x\", \"parents\": \"None\", \"cycle\": \"$cycle\", \"event_name\": \"$eventName\", \"data\": \"0x$data%x\"}\n")
     }

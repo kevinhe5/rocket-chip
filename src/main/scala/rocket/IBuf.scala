@@ -25,7 +25,7 @@ class IBuf(implicit p: Parameters) extends CoreModule {
     val pc = Output(UInt(vaddrBitsExtended.W))
     val btb_resp = Output(new BTBResp())
     val inst = Vec(retireWidth, Decoupled(new Instruction))
-    val tag = Output(new EventAnnotation) //Pipeline Viewer only supports non compressed inst
+    val tag = Output(new EventAnnotation) //Pipeline Viewer
   })
 
   // This module is meant to be more general, but it's not there yet

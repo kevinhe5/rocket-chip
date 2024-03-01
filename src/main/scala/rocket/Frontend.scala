@@ -141,7 +141,9 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
  
   // Pipeline Viewer
   val s1_tag = Reg(new EventAnnotation)
-  s1_tag := GenEvent("IF1", inst_ctr, io.cpu.npc, None)
+  when (s0_valid) {
+    s1_tag := GenEvent("IF1", inst_ctr, io.cpu.npc, None) //Fix this for s0
+  }
   val s2_tag = Reg(new EventAnnotation)
 
   

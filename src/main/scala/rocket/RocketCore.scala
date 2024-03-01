@@ -175,7 +175,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
       ("DTLB miss", () => io.dmem.perf.tlbMiss),
       ("L2 TLB miss", () => io.ptw.perf.l2miss)))))
 
-  val pipelinedMul = usingMulDiv && mulDivParams.mulUnroll == xLen
+  val pipelinedMul = usingMulDiv && mulDivParams.mulUnroll == xLen //1 == 64?? what is happening here?
   val decode_table = {
     (if (usingMulDiv) new MDecode(pipelinedMul, aluFn) +: (xLen > 32).option(new M64Decode(pipelinedMul, aluFn)).toSeq else Nil) ++:
     (if (usingAtomics) new ADecode(aluFn) +: (xLen > 32).option(new A64Decode(aluFn)).toSeq else Nil) ++:
@@ -419,7 +419,8 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   div.io.req.bits.in1 := ex_rs(0)
   div.io.req.bits.in2 := ex_rs(1)
   div.io.req.bits.tag := ex_waddr
-  val mul = pipelinedMul.option {
+  div.io.req.bits.pipeline_tag := ex_reg_tag //pipeline viewer
+  val mul = pipelinedMul.option { //What is this syntax??
     val m = Module(new PipelinedMultiplier(xLen, 2, aluFn = aluFn))
     m.io.req.valid := ex_reg_valid && ex_ctrl.mul
     m.io.req.bits := div.io.req.bits
@@ -492,7 +493,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     ex_reg_pc := ibuf.io.pc
     ex_reg_btb_resp := ibuf.io.btb_resp
     ex_reg_wphit := bpu.io.bpwatch.map { bpw => bpw.ivalid(0) }
-    ex_reg_tag := GenEvent("EX", cycle, ibuf.io.pc, Some(ibuf.io.tag))
+    ex_reg_tag := GenEvent("EX", cycle, id_inst(0), Some(ibuf.io.tag))
     // ex_reg_tag := ibuf.io.tag
   }
 
@@ -653,7 +654,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
 
   val wb_pc_valid = wb_reg_valid || wb_reg_replay || wb_reg_xcpt
   val wb_wxd = wb_reg_valid && wb_ctrl.wxd
-  val wb_set_sboard = wb_ctrl.div || wb_dcache_miss || wb_ctrl.rocc
+  val wb_set_sboard = wb_ctrl.div || wb_dcache_miss || wb_ctrl.rocc //cases when write back would be delayed
   val replay_wb_common = io.dmem.s2_nack || wb_reg_replay
   val replay_wb_rocc = wb_reg_valid && wb_ctrl.rocc && !io.rocc.cmd.ready
   val replay_wb_csr: Bool = wb_reg_valid && csr.io.rw_stall
@@ -667,10 +668,10 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val dmem_resp_valid = io.dmem.resp.valid && io.dmem.resp.bits.has_data
   val dmem_resp_replay = dmem_resp_valid && io.dmem.resp.bits.replay
 
-  div.io.resp.ready := !wb_wxd
-  val ll_wdata = WireDefault(div.io.resp.bits.data)
+  div.io.resp.ready := !wb_wxd //What does wxd standfor?
+  val ll_wdata = WireDefault(div.io.resp.bits.data) //ll? long latency?
   val ll_waddr = WireDefault(div.io.resp.bits.tag)
-  val ll_wen = WireDefault(div.io.resp.fire)
+  val ll_wen = WireDefault(div.io.resp.fire) //hooked up to rf_wen, indicates a writeback from mul/div unit
   if (usingRoCC) {
     io.rocc.resp.ready := !wb_wxd
     when (io.rocc.resp.fire) {
@@ -698,9 +699,12 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val wb_valid = wb_reg_valid && !replay_wb && !wb_xcpt //condition for committed instruction
   val wb_wen = wb_valid && wb_ctrl.wxd
   when (wb_valid) {
-    GenEvent("RET", cycle, wb_reg_inst, Some(wb_reg_tag)) //Added for pipeline viewer
+    GenEvent("RET", cycle, wb_reg_pc, Some(wb_reg_tag)) //Added for pipeline viewer
   }
-  val rf_wen = wb_wen || ll_wen
+  when (div.io.resp.fire) {
+    GenEvent("DIV-WB", cycle, 0.U, Some(div.io.resp.bits.pipeline_tag))
+  }
+  val rf_wen = wb_wen || ll_wen //write to register file
   val rf_waddr = Mux(ll_wen, ll_waddr, wb_waddr)
   val rf_wdata = Mux(dmem_resp_valid && dmem_resp_xpu, io.dmem.resp.bits.data(xLen-1, 0),
                  Mux(ll_wen, ll_wdata,
@@ -779,16 +783,16 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     iobpw.ivalid.foreach(_ := false.B)
   }
 
-  val hazard_targets = Seq((id_ctrl.rxs1 && id_raddr1 =/= 0.U, id_raddr1),
-                           (id_ctrl.rxs2 && id_raddr2 =/= 0.U, id_raddr2),
-                           (id_ctrl.wxd  && id_waddr  =/= 0.U, id_waddr))
+  val hazard_targets = Seq((id_ctrl.rxs1 && id_raddr1 =/= 0.U, id_raddr1), //raw hazard
+                           (id_ctrl.rxs2 && id_raddr2 =/= 0.U, id_raddr2), //raw
+                           (id_ctrl.wxd  && id_waddr  =/= 0.U, id_waddr)) //waw
   val fp_hazard_targets = Seq((io.fpu.dec.ren1, id_raddr1),
                               (io.fpu.dec.ren2, id_raddr2),
                               (io.fpu.dec.ren3, id_raddr3),
                               (io.fpu.dec.wen, id_waddr))
 
   val sboard = new Scoreboard(32, true)
-  sboard.clear(ll_wen, ll_waddr)
+  sboard.clear(ll_wen, ll_waddr) //clear score board when delayed/long-latency writeback occurs?
   def id_sboard_clear_bypass(r: UInt) = {
     // ll_waddr arrives late when D$ has ECC, so reshuffle the hazard check
     if (!tileParams.dcache.get.dataECC.isDefined) ll_wen && ll_waddr === r

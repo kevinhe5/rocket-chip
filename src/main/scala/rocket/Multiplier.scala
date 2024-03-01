@@ -13,11 +13,13 @@ class MultiplierReq(dataBits: Int, tagBits: Int, aluFn: ALUFN = new ALUFN) exten
   val in1 = Bits(dataBits.W)
   val in2 = Bits(dataBits.W)
   val tag = UInt(tagBits.W)
+  val pipeline_tag = new EventAnnotation //pipeline viewer
 }
 
 class MultiplierResp(dataBits: Int, tagBits: Int) extends Bundle {
   val data = Bits(dataBits.W)
   val tag = UInt(tagBits.W)
+  val pipeline_tag = new EventAnnotation //pipeline viewer
 }
 
 class MultiplierIO(val dataBits: Int, val tagBits: Int, aluFn: ALUFN = new ALUFN) extends Bundle {
@@ -158,6 +160,9 @@ class MulDiv(cfg: MulDivParams, width: Int, nXpr: Int = 32, aluFn: ALUFN = new A
   when (io.resp.fire || io.kill) {
     state := s_ready
   }
+  val mul_div_tag = Reg(new EventAnnotation) //Pipeline viewer
+  val cycle = RegInit(0.U(32.W))
+  cycle := cycle + 1.U
   when (io.req.fire) {
     state := Mux(cmdMul, s_mul, Mux(lhs_sign || rhs_sign, s_neg_inputs, s_div))
     isHi := cmdHi
@@ -167,6 +172,7 @@ class MulDiv(cfg: MulDivParams, width: Int, nXpr: Int = 32, aluFn: ALUFN = new A
     divisor := Cat(rhs_sign, rhs_in)
     remainder := lhs_in
     req := io.req.bits
+    mul_div_tag := GenEvent("DIV", cycle, 0.U, Some(io.req.bits.pipeline_tag))
   }
 
   val outMul = (state & (s_done_mul ^ s_done_div)) === (s_done_mul & ~s_done_div)
@@ -177,6 +183,7 @@ class MulDiv(cfg: MulDivParams, width: Int, nXpr: Int = 32, aluFn: ALUFN = new A
   io.resp.bits.data := Cat(hiOut, loOut)
   io.resp.valid := (state === s_done_mul || state === s_done_div)
   io.req.ready := state === s_ready
+  io.resp.bits.pipeline_tag := mul_div_tag
 }
 
 class PipelinedMultiplier(width: Int, latency: Int, nXpr: Int = 32, aluFn: ALUFN = new ALUFN) extends Module with ShouldBeRetimed {
