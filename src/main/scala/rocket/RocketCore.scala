@@ -620,7 +620,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     wb_reg_hfence_v := mem_ctrl.mem_cmd === M_HFENCEV
     wb_reg_hfence_g := mem_ctrl.mem_cmd === M_HFENCEG
     wb_reg_pc := mem_reg_pc
-    wb_reg_tag := GenEvent("WB", cycle, mem_reg_pc, Some(mem_reg_tag))
+    wb_reg_tag := GenEvent("WB", cycle, Mux(!mem_reg_xcpt && mem_ctrl.fp && mem_ctrl.wxd, io.fpu.toint_data, mem_int_wdata), Some(mem_reg_tag))
     //wb_reg_tag := mem_reg_tag
     wb_reg_wphit := mem_reg_wphit | bpu.io.bpwatch.map { bpw => (bpw.rvalid(0) && mem_reg_load) || (bpw.wvalid(0) && mem_reg_store) }
 
@@ -667,11 +667,15 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   val dmem_resp_waddr = io.dmem.resp.bits.tag(5, 1)
   val dmem_resp_valid = io.dmem.resp.valid && io.dmem.resp.bits.has_data
   val dmem_resp_replay = dmem_resp_valid && io.dmem.resp.bits.replay
-
+  //pipeline viewer for Dcache stores
+  // when (io.dmem.resp.valid) {
+  //   GenEvent("Store", cycle, io.dmem.resp.bits.data(xLen-1, 0), Some(io.dmem.resp.bits.pipeline_tag))
+  // }
   div.io.resp.ready := !wb_wxd //What does wxd standfor?
   val ll_wdata = WireDefault(div.io.resp.bits.data) //ll? long latency?
   val ll_waddr = WireDefault(div.io.resp.bits.tag)
   val ll_wen = WireDefault(div.io.resp.fire) //hooked up to rf_wen, indicates a writeback from mul/div unit
+  val ll_pipeline_tag = WireDefault(div.io.resp.bits.pipeline_tag)
   if (usingRoCC) {
     io.rocc.resp.ready := !wb_wxd
     when (io.rocc.resp.fire) {
@@ -694,6 +698,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
       io.rocc.resp.ready := false.B
     ll_waddr := dmem_resp_waddr
     ll_wen := true.B
+    ll_pipeline_tag := io.dmem.resp.bits.pipeline_tag
   }
 
   val wb_valid = wb_reg_valid && !replay_wb && !wb_xcpt //condition for committed instruction
@@ -701,9 +706,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   when (wb_valid) {
     GenEvent("RET", cycle, wb_reg_pc, Some(wb_reg_tag)) //Added for pipeline viewer
   }
-  when (div.io.resp.fire) {
-    GenEvent("DIV-WB", cycle, 0.U, Some(div.io.resp.bits.pipeline_tag))
-  }
+
   val rf_wen = wb_wen || ll_wen //write to register file
   val rf_waddr = Mux(ll_wen, ll_waddr, wb_waddr)
   val rf_wdata = Mux(dmem_resp_valid && dmem_resp_xpu, io.dmem.resp.bits.data(xLen-1, 0),
@@ -712,7 +715,9 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
                  Mux(wb_ctrl.mul, mul.map(_.io.resp.bits.data).getOrElse(wb_reg_wdata),
                  wb_reg_wdata))))
   when (rf_wen) { rf.write(rf_waddr, rf_wdata) }
-
+  when (ll_wen) {
+    GenEvent("LLWB", cycle, rf_wdata, Some(ll_pipeline_tag))
+  }
   // hook up control/status regfile
   csr.io.ungated_clock := clock
   csr.io.decode(0).inst := id_inst(0)
@@ -928,6 +933,8 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   io.dmem.req.bits.no_xcpt := DontCare
   io.dmem.req.bits.data := DontCare
   io.dmem.req.bits.mask := DontCare
+  io.dmem.req.bits.pipeline_tag := mem_reg_tag
+
 
   io.dmem.s1_data.data := (if (fLen == 0) mem_reg_rs2 else Mux(mem_ctrl.fp, Fill((xLen max fLen) / fLen, io.fpu.store_data), mem_reg_rs2))
   io.dmem.s1_data.mask := DontCare

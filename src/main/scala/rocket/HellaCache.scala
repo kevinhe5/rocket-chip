@@ -110,6 +110,7 @@ trait HasCoreMemOp extends HasL1HellaCacheParameters {
   val signed = Bool()
   val dprv = UInt(PRV.SZ.W)
   val dv = Bool()
+  val pipeline_tag = new EventAnnotation //pipeline viewer
 }
 
 trait HasCoreData extends HasCoreParameters {

@@ -538,6 +538,7 @@ class PTW(n: Int)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(
   io.mem.req.bits.no_xcpt := DontCare
   io.mem.req.bits.data := DontCare
   io.mem.req.bits.mask := DontCare
+  io.mem.req.bits.pipeline_tag := DontCare
 
   io.mem.s1_kill := l2_hit || state =/= s_wait1
   io.mem.s1_data := DontCare

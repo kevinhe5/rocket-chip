@@ -940,6 +940,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
     when (grantIsUncachedData && !resp.ready) {
       tl_out.d.ready := false.B
     }
+    resp.bits.pipeline_tag := uncachedResp.pipeline_tag //pipeline viewer
   }
 
   // load data subword mux/sign extension
